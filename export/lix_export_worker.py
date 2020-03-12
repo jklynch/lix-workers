@@ -1,6 +1,7 @@
-from _collections import defaultdict
+from collections import defaultdict, Mapping
 from functools import partial
 import itertools
+import json
 import logging
 from pathlib import Path
 
@@ -108,9 +109,11 @@ class SingleFilePacker(DocumentRouter):
         self.use_id = use_id
 
         self.f = None
+        self.top_group = None
 
     def start(self, doc):
         print(f"New run detected (uid={doc['uid'][:8]}...). ")
+
         filename = (
             f"{doc['uid'][:8]}_"
             f"{doc.get('sample_name', 'sample_name_not_recorded')}"
@@ -123,6 +126,15 @@ class SingleFilePacker(DocumentRouter):
             os.remove(filepath)
         print(f"Creating {filepath}...")
         self.f = h5py.File(filepath, "w")
+        if self.use_id:
+            top_group_name = doc["uid"]
+        else:
+            top_group_name = 'data_' + doc['scan_id']
+        self.top_group = self.f.create_group(top_group_name)
+        _safe_attrs_assignment(self.top_group["start"], doc)
+
+    def descriptor(self, doc):
+        _safe_attrs_assignment(self.top_group["descriptor"], doc)
 
     def event(self, doc):
         print("event")
@@ -138,7 +150,37 @@ class SingleFilePacker(DocumentRouter):
 
     def stop(self, doc):
         print("stop")
+        _safe_attrs_assignment(self.top_group["stop"], doc)
         self.f.close()
+
+
+def _safe_attrs_assignment(h5_group, mapping):
+    mapping = _clean_dict(mapping)
+    for key, value in mapping.items():
+        # Special-case None, which fails too late to catch below.
+        if value is None:
+            value = 'None'
+        # Try storing natively.
+        try:
+            h5_group.attrs[key] = value
+        # Fallback: Save the repr, which in many cases can be used to
+        # recreate the object.
+        except TypeError:
+            h5_group.attrs[key] = json.dumps(value)
+
+
+def _clean_dict(mapping):
+    mapping = dict(mapping)
+    for k, v in list(mapping.items()):
+        # Store dictionaries as JSON strings.
+        if isinstance(v, Mapping):
+            mapping[k] = _clean_dict(mapping[k])
+            continue
+        try:
+            json.dumps(v)
+        except TypeError:
+            mapping[k] = str(v)
+    return mapping
 
 
 import os

@@ -18,7 +18,7 @@ logging.basicConfig(filename="worker.log")
 logging.getLogger("bluesky.kafka").setLevel("DEBUG")
 
 
-class Packer(DocumentRouter):
+class MultiFilePacker(DocumentRouter):
     def __init__(self, directory, max_frames_per_file, handler_class):
         self.directory = directory
         self.max_frames_per_file = max_frames_per_file
@@ -51,7 +51,7 @@ class Packer(DocumentRouter):
     def datum(self, doc):
         print("datum")
         self.datums[doc["resource"]].append(doc)
-        # Assume one datum == one frame. Can be more careul later.
+        # Assume one datum == one frame. Can be more careful later.
         # self.accum_pbar.update(1)
         if len(self.datums) == self.max_frames_per_file:
             self.export()
@@ -96,6 +96,31 @@ class Packer(DocumentRouter):
         print(f"Write complete.")
 
 
+class SingleFilePacker(DocumentRouter):
+    def __init__(self, directory):
+        self.directory = directory
+
+    def start(self, doc):
+        print(
+            f"New run detected (uid={doc['uid'][:8]}...). "
+        )
+
+    def event(self, doc):
+        print("event")
+
+    def event_page(self, doc):
+        print("event_page")
+
+    def resource(self, doc):
+        print("resource")
+
+    def datum(self, doc):
+        print("datum")
+
+    def stop(self, doc):
+        print("stop")
+
+
 import os
 from databroker.assets.handlers_base import HandlerBase
 from databroker.assets.base_registry import DuplicateHandler
@@ -110,8 +135,8 @@ from enum import Enum
 
 
 class data_file_path(Enum):
-    gpfs = '/nsls2/xf16id1/data'
-    ramdisk = '/exp_path'
+    gpfs = "/nsls2/xf16id1/data"
+    ramdisk = "/exp_path"
 
 
 class triggerMode(Enum):
@@ -130,24 +155,24 @@ global pilatus_trigger_mode
 pilatus_trigger_mode = triggerMode.software_trigger_single_frame
 
 # assuming that the data files always have names with these extensions
-image_size = {
-    'SAXS': (1043, 981),
-    'WAXS1': (619, 487),
-    'WAXS2': (1043, 981)
-}
+image_size = {"SAXS": (1043, 981), "WAXS1": (619, 487), "WAXS2": (1043, 981)}
 
 
 # if the cbf files have been moved already
 # CBF_replace_data_path = False
 
+
 class PilatusCBFHandler(HandlerBase):
-    specs = {'AD_CBF'} | HandlerBase.specs
+    specs = {"AD_CBF"} | HandlerBase.specs
     froot = data_file_path.gpfs
 
     def __init__(self, rpath, template, filename, frame_per_point=1, initial_number=1):
         # if frame_per_point>1:
-        print(f'Initializing CBF handler for {pilatus_trigger_mode} ...')
-        if pilatus_trigger_mode != triggerMode.software_trigger_single_frame and frame_per_point > 1:
+        print(f"Initializing CBF handler for {pilatus_trigger_mode} ...")
+        if (
+            pilatus_trigger_mode != triggerMode.software_trigger_single_frame
+            and frame_per_point > 1
+        ):
             # file name should look like test_000125_SAXS_00001.cbf, instead of test_000125_SAXS.cbf
             template = template[:-4] + "_%05d.cbf"
 
@@ -156,18 +181,20 @@ class PilatusCBFHandler(HandlerBase):
         self._filename = filename
         self._initial_number = initial_number
         self._image_size = None
-        self._default_path = os.path.join(rpath, '')
+        self._default_path = os.path.join(rpath, "")
         self._path = ""
 
         for k in image_size:
             if template.find(k) >= 0:
                 self._image_size = image_size[k]
         if self._image_size is None:
-            raise Exception(f'Unrecognized data file extension in filename template: {template}')
+            raise Exception(
+                f"Unrecognized data file extension in filename template: {template}"
+            )
 
         for fr in data_file_path:
             if self._default_path.find(fr.value) == 0:
-                self._dir = self._default_path[len(fr.value):]
+                self._dir = self._default_path[len(fr.value) :]
                 return
         raise Exception(f"invalid file path: {self._default_path}")
 
@@ -185,9 +212,11 @@ class PilatusCBFHandler(HandlerBase):
             img = fabio.open(fn)
             data = img.data
             if data.shape != self._image_size:
-                print(f'got incorrect image size from {fn}: {data.shape}')  # , return an empty frame instead.')
+                print(
+                    f"got incorrect image size from {fn}: {data.shape}"
+                )  # , return an empty frame instead.')
         except:
-            print(f'could not read {fn}, return an empty frame instead.')
+            print(f"could not read {fn}, return an empty frame instead.")
             data = np.zeros(self._image_size)
         # print(data.shape)
         return data
@@ -201,11 +230,16 @@ class PilatusCBFHandler(HandlerBase):
         print("  ", self._template, self._path, self._initial_number)
         self.update_path()
 
-        if pilatus_trigger_mode == triggerMode.software_trigger_single_frame or self._fpp == 1:
+        if (
+            pilatus_trigger_mode == triggerMode.software_trigger_single_frame
+            or self._fpp == 1
+        ):
             fn = self._template % (self._path, self._filename, point_number + 1)
             ret.append(self.get_data(fn))
-        elif pilatus_trigger_mode in [triggerMode.software_trigger_multi_frame,
-                                      triggerMode.fly_scan]:
+        elif pilatus_trigger_mode in [
+            triggerMode.software_trigger_multi_frame,
+            triggerMode.fly_scan,
+        ]:
             for i in range(self._fpp):
                 fn = self._template % (self._path, self._filename, point_number + 1, i)
                 # data = self.get_data(fn)
@@ -219,7 +253,7 @@ class PilatusCBFHandler(HandlerBase):
 
 
 db = Broker.named("lix")
-db.reg.register_handler('AD_CBF', PilatusCBFHandler, overwrite=True)
+db.reg.register_handler("AD_CBF", PilatusCBFHandler, overwrite=True)
 
 d = RemoteDispatcher(
     topics=["lix.bluesky.documents"],
@@ -231,16 +265,34 @@ d = RemoteDispatcher(
 )
 
 
-def factory(name, doc):
-    packer = Packer(
-        directory="/tmp/export_worker/", max_frames_per_file=2, handler_class=PilatusCBFHandler
+def multi_file_packer_factory(name, doc):
+    packer = MultiFilePacker(
+        directory="/tmp/export_worker/multi_file/",
+        max_frames_per_file=2,
+        handler_class=PilatusCBFHandler,
     )
-    print("created a Packer")
+    print("created a MultiFilePacker")
     return [packer], []
 
 
-run_router = RunRouter(factories=[factory])
+multi_file_run_router = RunRouter(factories=[multi_file_packer_factory])
 
-d.subscribe(run_router)
+
+def single_file_packer_factory(name, doc):
+    packer = SingleFilePacker(
+        directory="/tmp/export_worker/single_file/",
+    )
+    print("created a SingleFilePacker")
+    return [packer], []
+
+
+single_file_run_router = RunRouter(
+    factories=[single_file_packer_factory],
+    handler_registry={"AD_CBF": PilatusCBFHandler},
+    fill_or_fail=True
+)
+
+d.subscribe(multi_file_run_router)
+d.subscribe(single_file_run_router)
 print("Starting Packer...")
 d.start()

@@ -13,7 +13,8 @@ def publish_documents(scan_id, topic, bootstrap_servers):
     )
 
     db = databroker.Broker.named("lix")
-    for name, doc in db[scan_id]:
+    for name, doc in db[scan_id].documents():
+        print(f"publishing document {name}")
         kafka_publisher(name, doc)
 
 

@@ -1,6 +1,7 @@
 from _collections import defaultdict
 from functools import partial
 import itertools
+import logging
 from pathlib import Path
 
 import h5py
@@ -11,6 +12,10 @@ import msgpack_numpy as mpn
 from bluesky_kafka import RemoteDispatcher
 from databroker import Broker
 from event_model import DocumentRouter, RunRouter
+
+
+logging.basicConfig(filename="worker.log")
+logging.getLogger("bluesky.kafka").setLevel("DEBUG")
 
 
 class Packer(DocumentRouter):

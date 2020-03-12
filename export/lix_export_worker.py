@@ -87,6 +87,7 @@ class Packer(DocumentRouter):
             f"{md['uid'][:8]}_"
             f"chunk{i:02}_"
             f"{md.get('sample_name', 'sample_name_not_recorded')}"
+            ".h5"
         )
         print(f"Writing {filename} with shape {image_stack.shape}...")
         filepath = Path(self.directory) / Path(filename)

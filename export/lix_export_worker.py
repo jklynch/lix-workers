@@ -226,7 +226,7 @@ d = RemoteDispatcher(
     group_id="lix.export.worker",
     consumer_config={"auto.offset.reset": "latest"},
     polling_duration=1.0,
-    deserializer=partial(msgpack.loads, object_hook=mpn.decode),
+    deserializer=partial(msgpack.unpackb, object_hook=mpn.decode),
 )
 
 

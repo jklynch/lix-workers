@@ -34,12 +34,17 @@ class Packer(DocumentRouter):
         #                        total=self.max_frames_per_file)
 
     def event(self, doc):
-        ...
+        print("event")
+
+    def event_page(self, doc):
+        print("event_page")
 
     def resource(self, doc):
+        print("resource")
         self.resources[doc["uid"]] = doc
 
     def datum(self, doc):
+        print("datum")
         self.datums[doc["resource"]].append(doc)
         # Assume one datum == one frame. Can be more careul later.
         # self.accum_pbar.update(1)
@@ -47,6 +52,7 @@ class Packer(DocumentRouter):
             self.export()
 
     def stop(self, doc):
+        print("stop")
         # Export even if we haven't reached the limit yet.
         # No file should bridge across more than one run.
         if self.datums:

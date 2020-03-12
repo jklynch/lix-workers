@@ -9,7 +9,10 @@ def publish_documents(scan_id, topic, bootstrap_servers):
         topic=topic,
         bootstrap_servers=bootstrap_servers,
         key="lix.export.worker.testing",
-        producer_config={"enable.idempotence": False}
+        producer_config={
+            "acks": 1,
+            "request.timeout.ms": 5000,
+        }
     )
 
     db = databroker.Broker.named("lix")

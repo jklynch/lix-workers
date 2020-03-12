@@ -23,6 +23,7 @@ def publish_documents(scan_id, topic, bootstrap_servers):
     for name, doc in db[scan_id].documents():
         print(f"publishing document {name}")
         kafka_publisher(name, doc)
+    kafka_publisher.flush()
 
 
 if __name__ == "__main__":

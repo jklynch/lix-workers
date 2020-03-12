@@ -1,7 +1,11 @@
 import argparse
+import logging
 
 from bluesky_kafka import Publisher
 import databroker
+
+
+logging.getLogger("bluesky.kafka").setLevel("DEBUG")
 
 
 def publish_documents(scan_id, topic, bootstrap_servers):

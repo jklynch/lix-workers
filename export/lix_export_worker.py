@@ -91,6 +91,9 @@ class MultiFilePacker(DocumentRouter):
         )
         print(f"Writing {filename} with shape {image_stack.shape}...")
         filepath = Path(self.directory) / Path(filename)
+        if os.path.exists(filepath):
+            print(f"MultiFilePacker deleting existing file {filepath}")
+            os.remove(filepath)
         with h5py.File(filepath) as f:
             f.create_dataset("data", data=image_stack)
         print(f"Write complete.")

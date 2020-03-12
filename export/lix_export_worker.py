@@ -97,13 +97,29 @@ class MultiFilePacker(DocumentRouter):
 
 
 class SingleFilePacker(DocumentRouter):
-    def __init__(self, directory):
+    def __init__(self, directory, stream_name=None, fields=None, timestamps=True, use_id=True):
         self.directory = directory
+        self.stream_name = stream_name
+        self.fields = fields
+        self.timestamps = timestamps
+        self.use_id = use_id
+
+        self.f = None
 
     def start(self, doc):
-        print(
-            f"New run detected (uid={doc['uid'][:8]}...). "
+        print(f"New run detected (uid={doc['uid'][:8]}...). ")
+        filename = (
+            f"{doc['uid'][:8]}_"
+            f"{doc.get('sample_name', 'sample_name_not_recorded')}"
+            ".h5"
         )
+        filepath = Path(self.directory) / Path(filename)
+
+        if os.path.exists(filepath):
+            print(f"deleting existing file {filepath}")
+            os.remove(filepath)
+        print("Creating {filepath}...")
+        self.f = h5py.File(filepath, "w")
 
     def event(self, doc):
         print("event")
@@ -119,6 +135,7 @@ class SingleFilePacker(DocumentRouter):
 
     def stop(self, doc):
         print("stop")
+        self.f.close()
 
 
 import os

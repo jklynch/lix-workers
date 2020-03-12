@@ -236,7 +236,6 @@ def factory(name, doc):
         directory="/tmp/export_worker/", max_frames_per_file=2, handler_class=PilatusCBFHandler
     )
     print("created a Packer")
-    packer(name, doc)
     return [packer], []
 
 

@@ -15,7 +15,7 @@ from event_model import DocumentRouter, RunRouter
 
 
 logging.basicConfig(filename="worker.log")
-logging.getLogger("bluesky.kafka").setLevel("DEBUG")
+logging.getLogger("bluesky.kafka").setLevel("INFO")
 
 
 class MultiFilePacker(DocumentRouter):

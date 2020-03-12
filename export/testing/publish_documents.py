@@ -9,7 +9,7 @@ from bluesky_kafka import Publisher
 import databroker
 
 
-logging.getLogger("bluesky.kafka").setLevel("DEBUG")
+logging.getLogger("bluesky.kafka").setLevel("INFO")
 
 
 def publish_documents(scan_id, topic, bootstrap_servers):

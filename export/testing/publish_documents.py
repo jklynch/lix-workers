@@ -1,5 +1,9 @@
 import argparse
+from functools import partial
 import logging
+
+import msgpack
+import msgpack_numpy as mpn
 
 from bluesky_kafka import Publisher
 import databroker
@@ -16,7 +20,8 @@ def publish_documents(scan_id, topic, bootstrap_servers):
         producer_config={
             "acks": 1,
             "request.timeout.ms": 5000,
-        }
+        },
+        serializer=partial(msgpack.packb, default=mpn.encode)
     )
 
     db = databroker.Broker.named("lix")

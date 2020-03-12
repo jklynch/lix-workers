@@ -1,4 +1,5 @@
-from collections import defaultdict, Mapping
+from collections import defaultdict
+from collections.abc import Mapping
 from functools import partial
 import itertools
 import json
@@ -131,10 +132,12 @@ class SingleFilePacker(DocumentRouter):
         else:
             top_group_name = 'data_' + doc['scan_id']
         self.top_group = self.f.create_group(top_group_name)
-        _safe_attrs_assignment(self.top_group["start"], doc)
+        start_group = self.top_group.create_group("start")
+        _safe_attrs_assignment(start_group, doc)
 
     def descriptor(self, doc):
-        _safe_attrs_assignment(self.top_group["descriptor"], doc)
+        descriptor_group = self.top_group.create_group("descriptor")
+        _safe_attrs_assignment(descriptor_group, doc)
 
     def event(self, doc):
         print("event")
@@ -150,7 +153,8 @@ class SingleFilePacker(DocumentRouter):
 
     def stop(self, doc):
         print("stop")
-        _safe_attrs_assignment(self.top_group["stop"], doc)
+        stop_group = self.top_group.create_group("stop")
+        _safe_attrs_assignment(stop_group, doc)
         self.f.close()
 
 

@@ -118,7 +118,7 @@ class SingleFilePacker(DocumentRouter):
         if os.path.exists(filepath):
             print(f"deleting existing file {filepath}")
             os.remove(filepath)
-        print("Creating {filepath}...")
+        print(f"Creating {filepath}...")
         self.f = h5py.File(filepath, "w")
 
     def event(self, doc):

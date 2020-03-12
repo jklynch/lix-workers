@@ -135,7 +135,8 @@ from enum import Enum
 
 
 class data_file_path(Enum):
-    gpfs = "/nsls2/xf16id1/data"
+    #gpfs = "/nsls2/xf16id1/data"
+    gpfs = "/GPFS/xf16id/exp_path"
     ramdisk = "/exp_path"
 
 
@@ -209,6 +210,7 @@ class PilatusCBFHandler(HandlerBase):
         """ the file may not exist
         """
         try:
+            print(f"reading file {fn}")
             img = fabio.open(fn)
             data = img.data
             if data.shape != self._image_size:

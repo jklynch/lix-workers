@@ -4,7 +4,9 @@ from functools import partial
 import itertools
 import json
 import logging
+import os
 from pathlib import Path
+import pprint
 
 import h5py
 import numpy as np
@@ -16,9 +18,11 @@ from databroker import Broker
 from event_model import DocumentRouter, RunRouter
 
 
+if os.path.exists("worker.log"):
+    os.remove("worker.log")
 logging.basicConfig(filename="worker.log")
 logging.getLogger("bluesky.kafka").setLevel("INFO")
-
+logging.getLogger("lix").setLevel("DEBUG")
 
 class MultiFilePacker(DocumentRouter):
     def __init__(self, directory, max_frames_per_file, handler_class):
@@ -41,17 +45,19 @@ class MultiFilePacker(DocumentRouter):
         #                        total=self.max_frames_per_file)
 
     def event(self, doc):
-        print("event")
+        #print("event")
+        pass
 
     def event_page(self, doc):
-        print("event_page")
+        #print("event_page")
+        pass
 
     def resource(self, doc):
-        print("resource")
+        #print("resource")
         self.resources[doc["uid"]] = doc
 
     def datum(self, doc):
-        print("datum")
+        #print("datum")
         self.datums[doc["resource"]].append(doc)
         # Assume one datum == one frame. Can be more careful later.
         # self.accum_pbar.update(1)
@@ -91,10 +97,10 @@ class MultiFilePacker(DocumentRouter):
             f"{md.get('sample_name', 'sample_name_not_recorded')}"
             ".h5"
         )
-        print(f"Writing {filename} with shape {image_stack.shape}...")
+        #print(f"Writing {filename} with shape {image_stack.shape}...")
         filepath = Path(self.directory) / Path(filename)
         if os.path.exists(filepath):
-            print(f"MultiFilePacker deleting existing file {filepath}")
+            #print(f"MultiFilePacker deleting existing file {filepath}")
             os.remove(filepath)
         with h5py.File(filepath) as f:
             f.create_dataset("data", data=image_stack)
@@ -109,53 +115,108 @@ class SingleFilePacker(DocumentRouter):
         self.timestamps = timestamps
         self.use_id = use_id
 
-        self.f = None
-        self.top_group = None
+        self.event_page_doc_count = 0
+        self.event_doc_count = 0
+
+        self.filepath = None
+        self.scan_group_name = None
+
+        self.log = logging.getLogger("lix")
 
     def start(self, doc):
-        print(f"New run detected (uid={doc['uid'][:8]}...). ")
-
+        self.log.info(f"New run detected (uid={doc['uid'][:8]}...). ")
+        self.log.debug(pprint.pformat(doc))
         filename = (
             f"{doc['uid'][:8]}_"
             f"{doc.get('sample_name', 'sample_name_not_recorded')}"
             ".h5"
         )
-        filepath = Path(self.directory) / Path(filename)
+        self.filepath = Path(self.directory) / Path(filename)
+        if os.path.exists(self.filepath):
+            self.log.warning("%s exists", self.filepath)
+            self.log.warning("deleting %s", self.filepath)
+            os.remove(self.filepath)
 
-        if os.path.exists(filepath):
-            print(f"deleting existing file {filepath}")
-            os.remove(filepath)
-        print(f"Creating {filepath}...")
-        self.f = h5py.File(filepath, "w")
+        # open filepath and create a top-level group
+        # named with scan_id or uid
         if self.use_id:
-            top_group_name = doc["uid"]
+            self.scan_group_name = doc["uid"]
         else:
-            top_group_name = 'data_' + doc['scan_id']
-        self.top_group = self.f.create_group(top_group_name)
-        start_group = self.top_group.create_group("start")
-        _safe_attrs_assignment(start_group, doc)
+            self.scan_group_name = str(doc["scan_id"])
 
+        self.log.info("opening file %s", self.filepath)
+        with h5py.File(self.filepath, "a") as f:
+            # create the top-level group for this scan
+            if self.scan_group_name in f.keys():
+                self.log.info("scan group %s already exists", self.scan_group_name)
+            else:
+                scan_group = f.create_group(self.scan_group_name)
+                self.log.info("created scan group %s", scan_group)
+                
     def descriptor(self, doc):
-        descriptor_group = self.top_group.create_group("descriptor")
-        _safe_attrs_assignment(descriptor_group, doc)
+        self.log.info("descriptor")
+        self.log.debug(pprint.pformat(doc))
 
+        if not os.path.exists(self.filepath):
+            raise FileNotFoundException(self.filepath)
+        
+        with h5py.File(self.filepath, "a") as f:
+            for data_key, data_info in doc["data_keys"].items():
+                if data_info["dtype"] == "array":
+                    # data_info["shape"] looks like [b, a, 0] but should be [0, a, b]
+                    # this is a bug?
+                    dataset_shape = data_info["shape"].copy()
+                    dataset_shape.reverse()
+                    self.log.debug("creating dataset %s with shape %s", data_key, dataset_shape)
+                        
+                    d = f[self.scan_group_name].create_dataset(
+                        name=data_key,
+                        dtype="i4",  # TODO: don't do that
+                        # start with axis 0 size 0 because it will be resized
+                        # before every new array is stored
+                        shape=dataset_shape,
+                        # here I want (None, a, b)
+                        maxshape=(None, *dataset_shape[1:]),
+                        chunks=(1, *dataset_shape[1:])
+                    )
+                    self.log.debug("dataset: %s", d)
+                    
     def event(self, doc):
-        print("event")
+        self.log.info("event")
+        self.event_doc_count += 1
 
     def event_page(self, doc):
-        print("event_page")
+        self.log.info("event_page")
+        self.log.debug(pprint.pformat(doc))
+        self.log.debug("doc[data][pil1M_ext_image][0] shape: %s", doc["data"]["pil1M_ext_image"][0].shape)
+        self.log.debug("doc[data][pilW1_ext_image][0] shape: %s", doc["data"]["pilW1_ext_image"][0].shape)
+        self.log.debug("doc[data][pilW2_ext_image][0] shape: %s", doc["data"]["pilW2_ext_image"][0].shape)
 
+        with h5py.File(self.filepath) as f:
+            for data_key, event_page_data in doc["data"].items():
+                if data_key in f[self.scan_group_name]:
+                    data_array = event_page_data[0]
+                    d = f[self.scan_group_name][data_key]
+
+                    s = d.len()
+                    self.log.debug("%s has len() %s", d, s)
+                    self.log.debug("event page data has shape %s", data_array.shape)
+                    
+                    d.resize((d.shape[0]+1, *d.shape[1:]))
+                    d[-1, :] = data_array
+
+        self.event_page_doc_count += 1
+        
     def resource(self, doc):
-        print("resource")
+        self.log.info("resource")
 
     def datum(self, doc):
-        print("datum")
+        self.log.info("datum")
 
     def stop(self, doc):
-        print("stop")
-        stop_group = self.top_group.create_group("stop")
-        _safe_attrs_assignment(stop_group, doc)
-        self.f.close()
+        self.log.info("stop")
+        self.log.info("%d event page documents", self.event_page_doc_count)
+        self.log.info("%d event documents", self.event_doc_count)
 
 
 def _safe_attrs_assignment(h5_group, mapping):
@@ -348,7 +409,7 @@ multi_file_run_router = RunRouter(factories=[multi_file_packer_factory])
 
 def single_file_packer_factory(name, doc):
     packer = SingleFilePacker(
-        directory="/tmp/export_worker/single_file/",
+        directory="/tmp/export_worker/single_file/", use_id=False
     )
     print("created a SingleFilePacker")
     return [packer], []

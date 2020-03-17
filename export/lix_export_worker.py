@@ -122,10 +122,12 @@ class SingleFilePacker(DocumentRouter):
         self.filepath = None
         self.scan_group_name = None
 
+        self.descriptor_uid_to_stream_name = dict()
+        
         self.log = logging.getLogger("lix")
 
     def start(self, doc):
-        self.log.info("New run detected uid=", doc["uid"])
+        self.log.info("New run detected uid=%s", doc["uid"])
         self.log.debug(pprint.pformat(doc))
         filename = (
             f"{doc['uid'][:8]}_"
@@ -155,17 +157,20 @@ class SingleFilePacker(DocumentRouter):
                 self.log.info("created scan group %s", scan_group)
                 
     def descriptor(self, doc):
-        self.log.info("descriptor")
+        self.log.info("descriptor name=%s", doc["name"])
         self.log.debug(pprint.pformat(doc))
+
+        self.descriptor_uid_to_stream_name[doc["uid"]] = doc["name"]
 
         if not os.path.exists(self.filepath):
             raise FileNotFoundError(self.filepath)
         
         with h5py.File(self.filepath, "a") as f:
             h5_scan_group = f[self.scan_group_name]
-            h5_scan_data_group = h5_scan_group.create_group("data")
-            h5_scan_timestamps_group = h5_scan_group.create_group("timestamps")
-            h5_scan_group.create_dataset(
+            h5_scan_stream_group = h5_scan_group.create_group(doc["name"])
+            h5_scan_stream_data_group = h5_scan_stream_group.create_group("data")
+            h5_scan_stream_timestamps_group = h5_scan_stream_group.create_group("timestamps")
+            h5_scan_stream_group.create_dataset(
                 name="time",
                 dtype="f8",
                 shape=(0, ),
@@ -173,7 +178,7 @@ class SingleFilePacker(DocumentRouter):
                 chunks=(1, )
             )
             for ep_data_key, ep_data_info in doc["data_keys"].items():
-                h5_scan_timestamps_group.create_dataset(
+                h5_scan_stream_timestamps_group.create_dataset(
                     name=ep_data_key,
                     dtype="f8",
                     shape=(0,),
@@ -189,7 +194,7 @@ class SingleFilePacker(DocumentRouter):
                     h5_dataset_shape.reverse()
 
                     self.log.debug("creating dataset %s with shape %s", ep_data_key, h5_dataset_shape)
-                    h5_scan_data_dataset = h5_scan_data_group.create_dataset(
+                    h5_scan_stream_data_dataset = h5_scan_stream_data_group.create_dataset(
                         name=ep_data_key,
                         dtype="i4",  # TODO: don't do that
                         # start with axis 0 size 0 because it will be resized
@@ -200,14 +205,14 @@ class SingleFilePacker(DocumentRouter):
                         chunks=(1, *h5_dataset_shape[1:])
                     )
                 elif ep_data_info["dtype"] == "string":
-                    unicode_data_type = h5py.string_dtype(encoding='utf-8')
-                    h5_scan_data_dataset = h5_scan_data_group.create_dataset(
+                    unicode_data_type = h5py.string_dtype()
+                    h5_scan_stream_data_dataset = h5_scan_stream_data_group.create_dataset(
                         name=ep_data_key,
                         # data=data,
                         shape=(0,),
                         maxshape=(None,),
                         chunks=(1,),
-                        dt=unicode_data_type,
+                        dtype=unicode_data_type,
                         compression='gzip'
                     )
                 elif ep_data_info["dtype"] == "integer":
@@ -217,7 +222,7 @@ class SingleFilePacker(DocumentRouter):
                 else:
                     raise Exception()
 
-        self.log.debug("dataset: %s", h5_scan_data_dataset)
+        self.log.debug("created dataset %s", h5_scan_stream_data_dataset)
 
     def event(self, doc):
         self.log.info("event")
@@ -232,17 +237,24 @@ class SingleFilePacker(DocumentRouter):
 
         with h5py.File(self.filepath) as f:
             event_page_time = doc["time"]
-            event_page_timestamp = doc["timestamp"]
+            event_page_timestamps = doc["timestamps"]
+            stream_name = self.descriptor_uid_to_stream_name[doc["descriptor"]]
+            h5_scan_stream_data_group = f[self.scan_group_name][stream_name]["data"]
             for ep_data_key, ep_data in doc["data"].items():
-                if ep_data_key in f[self.scan_group_name]:
+                if ep_data_key in h5_scan_stream_data_group:
+                    self.log.debug("found event_page data_key %s in h5 group %s", ep_data_key, h5_scan_stream_data_group)
                     ep_data_array = ep_data[0]
-                    h5_data_array = f[self.scan_group_name]["data"][ep_data_key]
+                    h5_data_array = h5_scan_stream_data_group[ep_data_key]
 
                     self.log.debug("%s has len() %s", h5_data_array, h5_data_array.len())
-                    self.log.debug("event page data has shape %s", ep_data_array.shape)
-                    
                     h5_data_array.resize((h5_data_array.shape[0]+1, *h5_data_array.shape[1:]))
-                    h5_data_array[-1, :] = ep_data_array
+                    if hasattr(ep_data_array, "shape"):
+                        self.log.debug("event page data has shape %s", ep_data_array.shape)
+                        h5_data_array[-1, :] = ep_data_array
+                    else:
+                        # not an array...
+                        self.log.debug("event page data: %s", ep_data_array)
+                        h5_data_array[-1] = ep_data_array
 
         self.event_page_doc_count += 1
         
@@ -460,7 +472,8 @@ single_file_run_router = RunRouter(
     fill_or_fail=True
 )
 
-d.subscribe(multi_file_run_router)
+# getting unknown datum errors from multi_file_run_router
+#d.subscribe(multi_file_run_router)
 d.subscribe(single_file_run_router)
 print("Starting Packer...")
 d.start()

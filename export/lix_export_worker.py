@@ -24,6 +24,7 @@ logging.basicConfig(filename="worker.log")
 logging.getLogger("bluesky.kafka").setLevel("INFO")
 logging.getLogger("lix").setLevel("DEBUG")
 
+
 class MultiFilePacker(DocumentRouter):
     def __init__(self, directory, max_frames_per_file, handler_class):
         self.directory = directory
@@ -124,7 +125,7 @@ class SingleFilePacker(DocumentRouter):
         self.log = logging.getLogger("lix")
 
     def start(self, doc):
-        self.log.info(f"New run detected (uid={doc['uid'][:8]}...). ")
+        self.log.info("New run detected uid=", doc["uid"])
         self.log.debug(pprint.pformat(doc))
         filename = (
             f"{doc['uid'][:8]}_"
@@ -145,7 +146,7 @@ class SingleFilePacker(DocumentRouter):
             self.scan_group_name = str(doc["scan_id"])
 
         self.log.info("opening file %s", self.filepath)
-        with h5py.File(self.filepath, "a") as f:
+        with h5py.File(self.filepath, "w") as f:
             # create the top-level group for this scan
             if self.scan_group_name in f.keys():
                 self.log.info("scan group %s already exists", self.scan_group_name)
@@ -158,29 +159,66 @@ class SingleFilePacker(DocumentRouter):
         self.log.debug(pprint.pformat(doc))
 
         if not os.path.exists(self.filepath):
-            raise FileNotFoundException(self.filepath)
+            raise FileNotFoundError(self.filepath)
         
         with h5py.File(self.filepath, "a") as f:
-            for data_key, data_info in doc["data_keys"].items():
-                if data_info["dtype"] == "array":
+            h5_scan_group = f[self.scan_group_name]
+            h5_scan_data_group = h5_scan_group.create_group("data")
+            h5_scan_timestamps_group = h5_scan_group.create_group("timestamps")
+            h5_scan_group.create_dataset(
+                name="time",
+                dtype="f8",
+                shape=(0, ),
+                maxshape=(None, ),
+                chunks=(1, )
+            )
+            for ep_data_key, ep_data_info in doc["data_keys"].items():
+                h5_scan_timestamps_group.create_dataset(
+                    name=ep_data_key,
+                    dtype="f8",
+                    shape=(0,),
+                    maxshape=(None,),
+                    chunks=(1,)
+                )
+
+                self.log.debug("creating a dataset for %s with data type %s", ep_data_key, ep_data_info["dtype"])
+                if ep_data_info["dtype"] == "array":
                     # data_info["shape"] looks like [b, a, 0] but should be [0, a, b]
-                    # this is a bug?
-                    dataset_shape = data_info["shape"].copy()
-                    dataset_shape.reverse()
-                    self.log.debug("creating dataset %s with shape %s", data_key, dataset_shape)
-                        
-                    d = f[self.scan_group_name].create_dataset(
-                        name=data_key,
+                    # this is a bug
+                    h5_dataset_shape = ep_data_info["shape"].copy()
+                    h5_dataset_shape.reverse()
+
+                    self.log.debug("creating dataset %s with shape %s", ep_data_key, h5_dataset_shape)
+                    h5_scan_data_dataset = h5_scan_data_group.create_dataset(
+                        name=ep_data_key,
                         dtype="i4",  # TODO: don't do that
                         # start with axis 0 size 0 because it will be resized
                         # before every new array is stored
-                        shape=dataset_shape,
+                        shape=h5_dataset_shape,
                         # here I want (None, a, b)
-                        maxshape=(None, *dataset_shape[1:]),
-                        chunks=(1, *dataset_shape[1:])
+                        maxshape=(None, *h5_dataset_shape[1:]),
+                        chunks=(1, *h5_dataset_shape[1:])
                     )
-                    self.log.debug("dataset: %s", d)
-                    
+                elif ep_data_info["dtype"] == "string":
+                    unicode_data_type = h5py.string_dtype(encoding='utf-8')
+                    h5_scan_data_dataset = h5_scan_data_group.create_dataset(
+                        name=ep_data_key,
+                        # data=data,
+                        shape=(0,),
+                        maxshape=(None,),
+                        chunks=(1,),
+                        dt=unicode_data_type,
+                        compression='gzip'
+                    )
+                elif ep_data_info["dtype"] == "integer":
+                    ...
+                elif ep_data_info["dtype"] == "number":
+                    ...
+                else:
+                    raise Exception()
+
+        self.log.debug("dataset: %s", h5_scan_data_dataset)
+
     def event(self, doc):
         self.log.info("event")
         self.event_doc_count += 1
@@ -193,17 +231,18 @@ class SingleFilePacker(DocumentRouter):
         self.log.debug("doc[data][pilW2_ext_image][0] shape: %s", doc["data"]["pilW2_ext_image"][0].shape)
 
         with h5py.File(self.filepath) as f:
-            for data_key, event_page_data in doc["data"].items():
-                if data_key in f[self.scan_group_name]:
-                    data_array = event_page_data[0]
-                    d = f[self.scan_group_name][data_key]
+            event_page_time = doc["time"]
+            event_page_timestamp = doc["timestamp"]
+            for ep_data_key, ep_data in doc["data"].items():
+                if ep_data_key in f[self.scan_group_name]:
+                    ep_data_array = ep_data[0]
+                    h5_data_array = f[self.scan_group_name]["data"][ep_data_key]
 
-                    s = d.len()
-                    self.log.debug("%s has len() %s", d, s)
-                    self.log.debug("event page data has shape %s", data_array.shape)
+                    self.log.debug("%s has len() %s", h5_data_array, h5_data_array.len())
+                    self.log.debug("event page data has shape %s", ep_data_array.shape)
                     
-                    d.resize((d.shape[0]+1, *d.shape[1:]))
-                    d[-1, :] = data_array
+                    h5_data_array.resize((h5_data_array.shape[0]+1, *h5_data_array.shape[1:]))
+                    h5_data_array[-1, :] = ep_data_array
 
         self.event_page_doc_count += 1
         

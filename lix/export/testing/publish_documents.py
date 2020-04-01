@@ -13,6 +13,11 @@ logging.getLogger("bluesky.kafka").setLevel("INFO")
 
 
 def publish_documents(scan_id, topic, bootstrap_servers):
+    """
+        Testing setup:
+           1. in one terminal run python lix_export_worker.py
+           2. in another terminal run python publish_documents.py --scan-id 01ab1a
+    """
     kafka_publisher = Publisher(
         topic=topic,
         bootstrap_servers=bootstrap_servers,

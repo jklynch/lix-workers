@@ -46,19 +46,19 @@ class MultiFilePacker(DocumentRouter):
         #                        total=self.max_frames_per_file)
 
     def event(self, doc):
-        #print("event")
+        # print("event")
         pass
 
     def event_page(self, doc):
-        #print("event_page")
+        # print("event_page")
         pass
 
     def resource(self, doc):
-        #print("resource")
+        # print("resource")
         self.resources[doc["uid"]] = doc
 
     def datum(self, doc):
-        #print("datum")
+        # print("datum")
         self.datums[doc["resource"]].append(doc)
         # Assume one datum == one frame. Can be more careful later.
         # self.accum_pbar.update(1)
@@ -98,10 +98,10 @@ class MultiFilePacker(DocumentRouter):
             f"{md.get('sample_name', 'sample_name_not_recorded')}"
             ".h5"
         )
-        #print(f"Writing {filename} with shape {image_stack.shape}...")
+        # print(f"Writing {filename} with shape {image_stack.shape}...")
         filepath = Path(self.directory) / Path(filename)
         if os.path.exists(filepath):
-            #print(f"MultiFilePacker deleting existing file {filepath}")
+            # print(f"MultiFilePacker deleting existing file {filepath}")
             os.remove(filepath)
         with h5py.File(filepath) as f:
             f.create_dataset("data", data=image_stack)
@@ -109,7 +109,9 @@ class MultiFilePacker(DocumentRouter):
 
 
 class SingleFilePacker(DocumentRouter):
-    def __init__(self, directory, stream_name=None, fields=None, timestamps=True, use_id=True):
+    def __init__(
+        self, directory, stream_name=None, fields=None, timestamps=True, use_id=True
+    ):
         self.directory = directory
         self.stream_name = stream_name
         self.fields = fields
@@ -123,7 +125,8 @@ class SingleFilePacker(DocumentRouter):
         self.scan_group_name = None
 
         self.descriptor_uid_to_stream_name = dict()
-        
+        self.create_dataset_kwargs = dict()
+
         self.log = logging.getLogger("lix")
 
     def start(self, doc):
@@ -155,7 +158,7 @@ class SingleFilePacker(DocumentRouter):
             else:
                 scan_group = f.create_group(self.scan_group_name)
                 self.log.info("created scan group %s", scan_group)
-                
+
     def descriptor(self, doc):
         self.log.info("descriptor name=%s", doc["name"])
         self.log.debug(pprint.pformat(doc))
@@ -164,65 +167,65 @@ class SingleFilePacker(DocumentRouter):
 
         if not os.path.exists(self.filepath):
             raise FileNotFoundError(self.filepath)
-        
+
         with h5py.File(self.filepath, "a") as f:
             h5_scan_group = f[self.scan_group_name]
             h5_scan_stream_group = h5_scan_group.create_group(doc["name"])
             h5_scan_stream_data_group = h5_scan_stream_group.create_group("data")
-            h5_scan_stream_timestamps_group = h5_scan_stream_group.create_group("timestamps")
-            h5_scan_stream_group.create_dataset(
-                name="time",
-                dtype="f8",
-                shape=(0, ),
-                maxshape=(None, ),
-                chunks=(1, )
+            self.log.info("created group %s", h5_scan_stream_data_group)
+            h5_scan_stream_timestamps_group = h5_scan_stream_group.create_group(
+                "timestamps"
             )
-            for ep_data_key, ep_data_info in doc["data_keys"].items():
-                h5_scan_stream_timestamps_group.create_dataset(
-                    name=ep_data_key,
-                    dtype="f8",
-                    shape=(0,),
-                    maxshape=(None,),
-                    chunks=(1,)
-                )
+            self.log.info("created group %s", h5_scan_stream_timestamps_group)
 
-                self.log.debug("creating a dataset for %s with data type %s", ep_data_key, ep_data_info["dtype"])
+            h5_scan_stream_group.create_dataset(
+                name="time", dtype="f8", shape=(0,), maxshape=(None,), chunks=(1,)
+            )
+
+            for ep_data_key, ep_data_info in doc["data_keys"].items():
+                # TODO: create this dataset later
+                # h5_scan_stream_timestamps_group.create_dataset(
+                #    name=ep_data_key,
+                #    dtype="f8",
+                #    shape=(0,),
+                #    maxshape=(None,),
+                #    chunks=(1,)
+                # )
+
+                # start with these and try to do better for some cases below
+                h5_dataset_kwargs = {
+                    "name": ep_data_key,
+                    "dtype": None,  # this must be set
+                    "shape": (0,),  # start with 0 and resize
+                    "maxshape": (None,),
+                    "chunks": (1,),
+                }
+
                 if ep_data_info["dtype"] == "array":
                     # data_info["shape"] looks like [b, a, 0] but should be [0, a, b]
-                    # this is a bug
-                    h5_dataset_shape = ep_data_info["shape"].copy()
-                    h5_dataset_shape.reverse()
+                    # this is a disagreement between databroker and AD
+                    h5_dataset_array_shape = ep_data_info["shape"].copy()
+                    h5_dataset_array_shape.reverse()
 
-                    self.log.debug("creating dataset %s with shape %s", ep_data_key, h5_dataset_shape)
-                    h5_scan_stream_data_dataset = h5_scan_stream_data_group.create_dataset(
-                        name=ep_data_key,
-                        dtype="i4",  # TODO: don't do that
-                        # start with axis 0 size 0 because it will be resized
-                        # before every new array is stored
-                        shape=h5_dataset_shape,
-                        # here I want (None, a, b)
-                        maxshape=(None, *h5_dataset_shape[1:]),
-                        chunks=(1, *h5_dataset_shape[1:])
-                    )
+                    h5_dataset_kwargs["dtype"] = "i4"
+                    h5_dataset_kwargs["shape"] = tuple(h5_dataset_array_shape)
+                    h5_dataset_kwargs["maxshape"] = (None, *h5_dataset_array_shape[1:])
+                    h5_dataset_kwargs["chunks"] = (1, *h5_dataset_array_shape[1:])
                 elif ep_data_info["dtype"] == "string":
-                    unicode_data_type = h5py.string_dtype()
-                    h5_scan_stream_data_dataset = h5_scan_stream_data_group.create_dataset(
-                        name=ep_data_key,
-                        # data=data,
-                        shape=(0,),
-                        maxshape=(None,),
-                        chunks=(1,),
-                        dtype=unicode_data_type,
-                        compression='gzip'
-                    )
+                    h5_dataset_kwargs["dtype"] = h5py.string_dtype()
                 elif ep_data_info["dtype"] == "integer":
-                    ...
+                    h5_dataset_kwargs["dtype"] = "i4"
                 elif ep_data_info["dtype"] == "number":
-                    ...
+                    h5_dataset_kwargs["dtype"] = "f8"
                 else:
                     raise Exception()
+                self.log.info(
+                    "caching dataset %s parameters %s", ep_data_key, h5_dataset_kwargs
+                )
 
-        self.log.debug("created dataset %s", h5_scan_stream_data_dataset)
+                # h5_scan_stream_data_dataset = h5_scan_stream_data_group.create_dataset(**h5_dataset_kwargs)
+                # create the dataset when we first see a corresponding event_page
+                self.create_dataset_kwargs[ep_data_key] = h5_dataset_kwargs
 
     def event(self, doc):
         self.log.info("event")
@@ -231,33 +234,92 @@ class SingleFilePacker(DocumentRouter):
     def event_page(self, doc):
         self.log.info("event_page")
         self.log.debug(pprint.pformat(doc))
-        self.log.debug("doc[data][pil1M_ext_image][0] shape: %s", doc["data"]["pil1M_ext_image"][0].shape)
-        self.log.debug("doc[data][pilW1_ext_image][0] shape: %s", doc["data"]["pilW1_ext_image"][0].shape)
-        self.log.debug("doc[data][pilW2_ext_image][0] shape: %s", doc["data"]["pilW2_ext_image"][0].shape)
+        self.log.debug(
+            "doc[data][pil1M_ext_image][0] shape: %s",
+            doc["data"]["pil1M_ext_image"][0].shape,
+        )
+        self.log.debug(
+            "doc[data][pilW1_ext_image][0] shape: %s",
+            doc["data"]["pilW1_ext_image"][0].shape,
+        )
+        self.log.debug(
+            "doc[data][pilW2_ext_image][0] shape: %s",
+            doc["data"]["pilW2_ext_image"][0].shape,
+        )
 
         with h5py.File(self.filepath) as f:
             event_page_time = doc["time"]
             event_page_timestamps = doc["timestamps"]
             stream_name = self.descriptor_uid_to_stream_name[doc["descriptor"]]
-            h5_scan_stream_data_group = f[self.scan_group_name][stream_name]["data"]
-            for ep_data_key, ep_data in doc["data"].items():
-                if ep_data_key in h5_scan_stream_data_group:
-                    self.log.debug("found event_page data_key %s in h5 group %s", ep_data_key, h5_scan_stream_data_group)
-                    ep_data_array = ep_data[0]
-                    h5_data_array = h5_scan_stream_data_group[ep_data_key]
 
-                    self.log.debug("%s has len() %s", h5_data_array, h5_data_array.len())
-                    h5_data_array.resize((h5_data_array.shape[0]+1, *h5_data_array.shape[1:]))
-                    if hasattr(ep_data_array, "shape"):
-                        self.log.debug("event page data has shape %s", ep_data_array.shape)
-                        h5_data_array[-1, :] = ep_data_array
+            h5_scan_stream_data_group = f[self.scan_group_name][stream_name]["data"]
+            for ep_data_key, ep_data_list in doc["data"].items():
+                ep_data = ep_data_list[0]
+                if ep_data_key not in h5_scan_stream_data_group:
+                    self.log.debug("dataset '%s' has not been created yet", ep_data_key)
+                    create_dataset_kwargs = self.create_dataset_kwargs[ep_data_key]
+
+                    if hasattr(ep_data, "shape"):
+                        self.log.debug("event page '%s' has shape %s", ep_data_key, ep_data.shape)
+                        self.log.debug(
+                            "creating dataset '%s' with kwargs %s", ep_data_key, create_dataset_kwargs
+                        )
+                    elif isinstance(ep_data, list):
+                        ep_data_length = len(ep_data)
+                        self.log.debug(
+                            "event page '%s' is a list with length %d", ep_data_key, ep_data_length
+                        )
+                        self.log.debug(
+                            "create_dataset kwargs are %s", create_dataset_kwargs
+                        )
+                        create_dataset_kwargs.update(
+                            {
+                                "shape": (0, ep_data_length),
+                                "maxshape": (None, ep_data_length),
+                                "chunks": (1, ep_data_length),
+                            }
+                        )
+                        self.log.debug(
+                            "revised create_dataset kwargs are %s",
+                            create_dataset_kwargs,
+                        )
                     else:
-                        # not an array...
-                        self.log.debug("event page data: %s", ep_data_array)
-                        h5_data_array[-1] = ep_data_array
+                        self.log.debug("nothing to see here")
+
+                    self.log.debug(
+                        "creating dataset '%s' with kwargs %s",
+                        ep_data_key,
+                        create_dataset_kwargs,
+                    )
+                    h5_scan_stream_data_group.create_dataset(**create_dataset_kwargs)
+
+                h5_data_array = h5_scan_stream_data_group[ep_data_key]
+                self.log.debug(
+                    "found event_page data_key %s in h5 group %s",
+                    ep_data_key,
+                    h5_scan_stream_data_group,
+                )
+                self.log.debug("%s has len() %s", h5_data_array, h5_data_array.len())
+
+                h5_data_array.resize(
+                    (h5_data_array.shape[0] + 1, *h5_data_array.shape[1:])
+                )
+
+                if hasattr(ep_data, "shape"):
+                    self.log.debug("event page data has shape %s", ep_data.shape)
+                    h5_data_array[-1, :] = ep_data
+                elif isinstance(ep_data, list):
+                    self.log.debug(
+                        "event page data is a list with length %d", len(ep_data)
+                    )
+                    h5_data_array[-1, :] = ep_data
+                else:
+                    # not an array or list
+                    self.log.debug("event page data: %s", ep_data)
+                    h5_data_array[-1] = ep_data
 
         self.event_page_doc_count += 1
-        
+
     def resource(self, doc):
         self.log.info("resource")
 
@@ -275,7 +337,7 @@ def _safe_attrs_assignment(h5_group, mapping):
     for key, value in mapping.items():
         # Special-case None, which fails too late to catch below.
         if value is None:
-            value = 'None'
+            value = "None"
         # Try storing natively.
         try:
             h5_group.attrs[key] = value
@@ -313,7 +375,7 @@ from enum import Enum
 
 
 class data_file_path(Enum):
-    #gpfs = "/nsls2/xf16id1/data"
+    # gpfs = "/nsls2/xf16id1/data"
     gpfs = "/GPFS/xf16id/exp_path"
     ramdisk = "/exp_path"
 
@@ -459,9 +521,7 @@ multi_file_run_router = RunRouter(factories=[multi_file_packer_factory])
 
 
 def single_file_packer_factory(name, doc):
-    packer = SingleFilePacker(
-        directory="/tmp/export_worker/single_file/", use_id=False
-    )
+    packer = SingleFilePacker(directory="/tmp/export_worker/single_file/", use_id=False)
     print("created a SingleFilePacker")
     return [packer], []
 
@@ -469,11 +529,11 @@ def single_file_packer_factory(name, doc):
 single_file_run_router = RunRouter(
     factories=[single_file_packer_factory],
     handler_registry={"AD_CBF": PilatusCBFHandler},
-    fill_or_fail=True
+    fill_or_fail=True,
 )
 
 # getting unknown datum errors from multi_file_run_router
-#d.subscribe(multi_file_run_router)
+# d.subscribe(multi_file_run_router)
 d.subscribe(single_file_run_router)
-print("Starting Packer...")
+print("Starting LIX export worker...")
 d.start()
